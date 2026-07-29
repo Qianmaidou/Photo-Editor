@@ -766,7 +766,6 @@ dom.btnReset.addEventListener('click', () => {
     resetCrop();
     updateCropInfo();
   } else {
-    // 缩放模式：恢复原图尺寸
     if (state.sourceImage) {
       dom.resizeWidth.value = state.sourceImage.naturalWidth;
       dom.resizeHeight.value = state.sourceImage.naturalHeight;
@@ -774,6 +773,101 @@ dom.btnReset.addEventListener('click', () => {
   }
   drawPreview();
 });
+
+// ===== 保存 =====
+function getSuggestedFileName() {
+  const original = state.imageFileName;
+  const dot = original.lastIndexOf('.');
+  const name = dot > -1 ? original.slice(0, dot) : original;
+  const ext  = dot > -1 ? original.slice(dot) : '.png';
+  return name + '-修改后' + ext;
+}
+
+async function saveResult() {
+  if (!state.sourceImage) return;
+
+  const img = state.sourceImage;
+
+  // 根据模式确定输出尺寸
+  let outW, outH;
+  let useCrop = false;
+
+  if (state.mode === 'crop') {
+    if (!state.crop.active || state.crop.width < 1 || state.crop.height < 1) {
+      alert('请先在图片上拖拽创建裁剪区域');
+      return;
+    }
+    outW = state.crop.width;
+    outH = state.crop.height;
+    useCrop = true;
+  } else {
+    outW = parseInt(dom.resizeWidth.value) || img.naturalWidth;
+    outH = parseInt(dom.resizeHeight.value) || img.naturalHeight;
+
+    if (dom.resizeKeepRatio.checked) {
+      const ratio = img.naturalWidth / img.naturalHeight;
+      if (outW && !dom.resizeHeight.value) {
+        outH = Math.round(outW / ratio);
+      } else if (outH && !dom.resizeWidth.value) {
+        outW = Math.round(outH * ratio);
+      }
+    }
+  }
+
+  // 用离屏 canvas 生成输出图片
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = outH;
+  const octx = out.getContext('2d');
+
+  if (useCrop) {
+    // 9 参数 drawImage: 裁剪 + 等比输出
+    octx.drawImage(
+      img,
+      state.crop.x, state.crop.y, state.crop.width, state.crop.height,
+      0, 0, outW, outH,
+    );
+  } else {
+    octx.drawImage(img, 0, 0, outW, outH);
+  }
+
+  // 转为 blob
+  const blob = await new Promise(resolve => out.toBlob(resolve, 'image/png'));
+
+  // 保存
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: getSuggestedFileName(),
+        types: [
+          { description: 'PNG 图片', accept: { 'image/png': ['.png'] } },
+          { description: 'JPEG 图片', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      console.log('已保存:', handle.name);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.error('保存失败:', err);
+      fallbackDownload(blob);
+    }
+  } else {
+    fallbackDownload(blob);
+  }
+}
+
+function fallbackDownload(blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = getSuggestedFileName();
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+dom.btnSave.addEventListener('click', saveResult);
 
 dom.fileInput.addEventListener('change', () => {
   const file = dom.fileInput.files[0];
@@ -963,8 +1057,8 @@ canvas.addEventListener('pointermove', (e) => {
 // ===== 比例锁定 =====
 function getAspectRatio() {
   const val = dom.selRatio.value;
-  if (val === 'free' || val === 'custom') return null;
-  if (val === 'custom') return null;
+  if (val === 'free') return null;
+  if (val === 'custom') return getCustomAspectRatio();
   const [w, h] = val.split(':').map(Number);
   return w / h;
 }
