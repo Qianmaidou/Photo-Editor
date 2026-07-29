@@ -500,6 +500,10 @@ const state = {
     x: 0, y: 0,            // 图片在 canvas 上的左上角
     width: 0, height: 0,   // 图片在 canvas 上的显示尺寸
     scale: 1,              // 图片缩放比例 = displayWidth / naturalWidth
+    zoom: 1,               // 用户缩放级别 (0.1~10)
+    panX: 0, panY: 0,      // 平移偏移（逻辑像素）
+    baseX: 0, baseY: 0,    // 无缩放时的基准位置
+    baseW: 0, baseH: 0,    // 无缩放时的基准尺寸
   },
 
   // 裁剪区域（原始图片像素坐标）
@@ -656,7 +660,7 @@ async function loadImageFile(file) {
     updateUndoRedoButtons();
 
     // 计算图片显示参数
-    fitImageToContainer();
+    fitImageToContainer(true);
 
     // 显示 canvas，隐藏空状态
     canvas.style.display = 'block';
@@ -675,7 +679,7 @@ async function loadImageFile(file) {
   }
 }
 
-function fitImageToContainer() {
+function fitImageToContainer(resetZoom) {
   const img = state.sourceImage;
   const dpr = window.devicePixelRatio || 1;
   const cw = dom.container.clientWidth;
@@ -688,22 +692,38 @@ function fitImageToContainer() {
   canvas.style.height = ch + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // 以下计算使用逻辑像素（与 CSS 一致）
+  // 计算基准适配参数（无缩放、无平移）
   const padding = 40;
   const maxW = cw - padding * 2;
   const maxH = ch - padding * 2;
-  const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
+  const baseScale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
 
-  const displayW = img.naturalWidth * scale;
-  const displayH = img.naturalHeight * scale;
+  const d = state.imageDisplay;
+  d.baseW = img.naturalWidth * baseScale;
+  d.baseH = img.naturalHeight * baseScale;
+  d.baseX = (cw - d.baseW) / 2;
+  d.baseY = (ch - d.baseH) / 2;
 
-  state.imageDisplay = {
-    x: (cw - displayW) / 2,
-    y: (ch - displayH) / 2,
-    width: displayW,
-    height: displayH,
-    scale: scale,
-  };
+  if (resetZoom) {
+    d.zoom = 1;
+    d.panX = 0;
+    d.panY = 0;
+  }
+
+  applyZoomPan();
+}
+
+// 将 zoom + pan 应用到最终的 display 坐标
+function applyZoomPan() {
+  const d = state.imageDisplay;
+  d.scale = (d.baseW / state.sourceImage.naturalWidth) * d.zoom;
+  d.width  = d.baseW * d.zoom;
+  d.height = d.baseH * d.zoom;
+  // 以基准中心为锚点，缩放后中心 = 基准中心 + pan
+  const cx = d.baseX + d.baseW / 2 + d.panX;
+  const cy = d.baseY + d.baseH / 2 + d.panY;
+  d.x = cx - d.width / 2;
+  d.y = cy - d.height / 2;
 }
 
 // ===== 预览绘制 =====
@@ -1098,10 +1118,10 @@ dom.fileInput.addEventListener('change', () => {
   dom.fileInput.value = ''; // 清空以允许重新选择同一文件
 });
 
-// 窗口大小变化时重新适配
+// 窗口大小变化时重新适配（保持缩放和平移）
 window.addEventListener('resize', () => {
   if (state.sourceImage) {
-    fitImageToContainer();
+    fitImageToContainer(false);
     drawPreview();
   }
 });
@@ -1188,6 +1208,16 @@ function clampCrop(img) {
 canvas.addEventListener('pointerdown', (e) => {
   if (!state.sourceImage || state.mode !== 'crop') return;
 
+  // Space + 拖拽 = 平移图片
+  if (state.spaceHeld) {
+    state.panning = true;
+    state.panStart = { x: e.clientX, y: e.clientY };
+    state.panBefore = { panX: state.imageDisplay.panX, panY: state.imageDisplay.panY };
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+
   const pt = canvasCoords(e);
   const imgPt = toImageCoords(pt.x, pt.y);
   const img = state.sourceImage;
@@ -1232,6 +1262,17 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 canvas.addEventListener('pointermove', (e) => {
+  // 平移中
+  if (state.panning) {
+    const dx = e.clientX - state.panStart.x;
+    const dy = e.clientY - state.panStart.y;
+    state.imageDisplay.panX = state.panBefore.panX + dx;
+    state.imageDisplay.panY = state.panBefore.panY + dy;
+    applyZoomPan();
+    drawPreview();
+    return;
+  }
+
   if (!state.dragging || !state.sourceImage) return;
 
   const pt = canvasCoords(e);
@@ -1339,6 +1380,14 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 canvas.addEventListener('pointerup', (e) => {
+  // 结束平移
+  if (state.panning) {
+    state.panning = false;
+    canvas.releasePointerCapture(e.pointerId);
+    canvas.style.cursor = state.spaceHeld ? 'grab' : 'crosshair';
+    return;
+  }
+
   if (!state.dragging) return;
 
   state.dragging = false;
@@ -1371,6 +1420,10 @@ canvas.addEventListener('pointerleave', () => {
 // 更新光标样式
 canvas.addEventListener('pointermove', (e) => {
   if (state.dragging || !state.sourceImage || state.mode !== 'crop') return;
+  if (state.spaceHeld) {
+    canvas.style.cursor = 'grab';
+    return;
+  }
   const pt = canvasCoords(e);
   const hit = hitCropHandle(pt.x, pt.y);
   if (hit && hit !== 'move') {
@@ -1381,6 +1434,68 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.style.cursor = 'crosshair';
   }
 });
+
+// ===== 缩放与平移 =====
+// Space 键状态
+state.spaceHeld = false;
+state.panning = false;
+state.panStart = { x: 0, y: 0 };
+state.panBefore = { panX: 0, panY: 0 };
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' && !e.repeat && !e.target.closest('input, select, textarea')) {
+    e.preventDefault();
+    state.spaceHeld = true;
+    if (state.sourceImage && state.mode === 'crop') {
+      canvas.style.cursor = 'grab';
+    }
+  }
+  // Ctrl+0 重置缩放
+  if (e.ctrlKey && e.key === '0') {
+    e.preventDefault();
+    if (state.sourceImage) {
+      state.imageDisplay.zoom = 1;
+      state.imageDisplay.panX = 0;
+      state.imageDisplay.panY = 0;
+      applyZoomPan();
+      drawPreview();
+    }
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key === ' ') {
+    state.spaceHeld = false;
+    state.panning = false;
+    canvas.style.cursor = state.sourceImage && state.mode === 'crop' ? 'crosshair' : '';
+  }
+});
+
+// 滚轮缩放（裁剪模式下）
+canvas.addEventListener('wheel', (e) => {
+  if (!state.sourceImage || state.mode !== 'crop') return;
+  e.preventDefault();
+
+  const pt = canvasCoords(e);
+  const d = state.imageDisplay;
+  const oldZoom = d.zoom;
+
+  const step = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+  const newZoom = Math.max(0.1, Math.min(10, oldZoom * step));
+
+  if (newZoom === oldZoom) return;
+
+  // 以鼠标位置为锚点缩放
+  const anchorX = pt.x - d.baseX;
+  const anchorY = pt.y - d.baseY;
+  const ratio = newZoom / oldZoom;
+  d.panX = anchorX + (d.panX - anchorX) * ratio;
+  d.panY = anchorY + (d.panY - anchorY) * ratio;
+  d.zoom = newZoom;
+
+  applyZoomPan();
+  drawPreview();
+}, { passive: false });
 
 // ===== 比例锁定 =====
 function getAspectRatio() {
