@@ -563,9 +563,202 @@ dom.modeToggle.addEventListener('click', (e) => {
   setMode(btn.dataset.mode);
 });
 
+// ===== Canvas 元素 =====
+const canvas = document.createElement('canvas');
+canvas.style.display = 'none';
+dom.container.appendChild(canvas);
+const ctx = canvas.getContext('2d');
+
+// ===== 工具函数 =====
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// ===== 图片加载 =====
+async function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')); };
+    img.src = url;
+  });
+}
+
+async function openImage() {
+  // 优先使用 File System Access API
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: '图片', accept: { 'image/*': ['.png','.jpg','.jpeg','.webp','.bmp','.gif'] } }],
+        multiple: false,
+      });
+      const file = await handle.getFile();
+      await loadImageFile(file);
+      return;
+    } catch (err) {
+      // 用户取消选择，静默返回
+      if (err.name === 'AbortError') return;
+      console.warn('File System Access API 失败，回退到文件选择器:', err);
+    }
+  }
+  // 回退：触发隐藏的 file input
+  dom.fileInput.click();
+}
+
+async function loadImageFile(file) {
+  try {
+    const img = await loadImage(file);
+
+    state.sourceImage = img;
+    state.imageFileName = file.name;
+
+    // 重置裁剪区域
+    state.crop = {
+      active: false,
+      x: 0, y: 0,
+      width: 0, height: 0,
+      aspectRatio: null,
+    };
+
+    // 计算图片显示参数
+    fitImageToContainer();
+
+    // 显示 canvas，隐藏空状态
+    canvas.style.display = 'block';
+    dom.emptyState.style.display = 'none';
+
+    // 绘制预览
+    drawPreview();
+
+    // 更新 UI
+    updateUIAfterLoad(file);
+
+    console.log('图片已加载:', file.name, img.naturalWidth + '×' + img.naturalHeight);
+  } catch (err) {
+    console.error('加载图片出错:', err);
+    alert('无法加载图片，请确认文件格式正确。');
+  }
+}
+
+function fitImageToContainer() {
+  const img = state.sourceImage;
+  const cw = dom.container.clientWidth;
+  const ch = dom.container.clientHeight;
+
+  // canvas 填满容器
+  canvas.width = cw;
+  canvas.height = ch;
+
+  // 计算图片适配容器的尺寸（留 40px 边距）
+  const padding = 40;
+  const maxW = cw - padding * 2;
+  const maxH = ch - padding * 2;
+  const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
+
+  const displayW = img.naturalWidth * scale;
+  const displayH = img.naturalHeight * scale;
+
+  state.imageDisplay = {
+    x: (cw - displayW) / 2,
+    y: (ch - displayH) / 2,
+    width: displayW,
+    height: displayH,
+    scale: scale,
+  };
+}
+
+// ===== 预览绘制 =====
+function drawPreview() {
+  if (!state.sourceImage) return;
+
+  const { x, y, width, height } = state.imageDisplay;
+  const img = state.sourceImage;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 绘制图片
+  ctx.drawImage(img, x, y, width, height);
+
+  // 裁剪模式：绘制裁剪框
+  if (state.mode === 'crop' && state.crop.active) {
+    drawCropOverlay();
+  }
+}
+
+function drawCropOverlay() {
+  const { x, y, width, height, scale } = state.imageDisplay;
+  const crop = state.crop;
+
+  // 裁剪框在 canvas 上的坐标
+  const cx = x + crop.x * scale;
+  const cy = y + crop.y * scale;
+  const cw = crop.width * scale;
+  const ch = crop.height * scale;
+
+  // 暗色遮罩（四个矩形围绕裁剪框）
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, canvas.width, cy);                        // 上
+  ctx.fillRect(0, cy, cx, ch);                                  // 左
+  ctx.fillRect(cx + cw, cy, canvas.width - cx - cw, ch);        // 右
+  ctx.fillRect(0, cy + ch, canvas.width, canvas.height - cy - ch); // 下
+
+  // 裁剪框边框
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.strokeRect(cx, cy, cw, ch);
+  ctx.setLineDash([]);
+}
+
+function updateUIAfterLoad(file) {
+  // 启用按钮
+  dom.btnSave.disabled = false;
+  dom.btnReset.disabled = false;
+
+  // 状态栏
+  dom.statusFile.textContent = file.name;
+  dom.statusSize.textContent =
+    state.sourceImage.naturalWidth + ' × ' + state.sourceImage.naturalHeight +
+    ' | ' + formatBytes(file.size);
+
+  // 侧边栏
+  dom.sidebarEmpty.style.display = 'none';
+  if (state.mode === 'crop') {
+    dom.panelCrop.style.display = '';
+    dom.panelResize.style.display = 'none';
+  } else {
+    dom.panelCrop.style.display = 'none';
+    dom.panelResize.style.display = '';
+  }
+
+  // 缩放模式：初始化输出尺寸为原图尺寸
+  dom.resizeWidth.value = state.sourceImage.naturalWidth;
+  dom.resizeHeight.value = state.sourceImage.naturalHeight;
+}
+
+// ===== 事件绑定 =====
+dom.btnOpen.addEventListener('click', openImage);
+
+dom.fileInput.addEventListener('change', () => {
+  const file = dom.fileInput.files[0];
+  if (file) loadImageFile(file);
+  dom.fileInput.value = ''; // 清空以允许重新选择同一文件
+});
+
+// 窗口大小变化时重新适配
+window.addEventListener('resize', () => {
+  if (state.sourceImage) {
+    fitImageToContainer();
+    drawPreview();
+  }
+});
+
 // ===== 初始化 =====
 setMode('crop');
-console.log('图片剪裁器 v0.1 — 骨架就绪，双模式已就绪');
+console.log('图片剪裁器 v0.1 — 双模式就绪，图片加载就绪');
 </script>
 
 </body>
