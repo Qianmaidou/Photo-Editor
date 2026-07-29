@@ -756,6 +756,216 @@ window.addEventListener('resize', () => {
   }
 });
 
+// ===== 裁剪框交互 =====
+function canvasCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+// 将 canvas 坐标转为原图像素坐标
+function toImageCoords(cx, cy) {
+  const d = state.imageDisplay;
+  return {
+    x: (cx - d.x) / d.scale,
+    y: (cy - d.y) / d.scale,
+  };
+}
+
+// 将原图像素坐标转为 canvas 坐标
+function toCanvasCoords(ix, iy) {
+  const d = state.imageDisplay;
+  return {
+    x: d.x + ix * d.scale,
+    y: d.y + iy * d.scale,
+  };
+}
+
+// 检测 canvas 坐标是否在裁剪框内
+function hitCropBox(cx, cy) {
+  if (!state.crop.active) return false;
+  const box = toCanvasCoords(state.crop.x, state.crop.y);
+  const bw = state.crop.width * state.imageDisplay.scale;
+  const bh = state.crop.height * state.imageDisplay.scale;
+  return cx >= box.x && cx <= box.x + bw && cy >= box.y && cy <= box.y + bh;
+}
+
+// 根据比例约束调整裁剪框
+function constrainCropByRatio(crop) {
+  if (!crop.aspectRatio) return;
+  const ratio = crop.aspectRatio;
+  // 以宽度为基准调整高度
+  crop.height = crop.width / ratio;
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (!state.sourceImage || state.mode !== 'crop') return;
+
+  const pt = canvasCoords(e);
+  const imgPt = toImageCoords(pt.x, pt.y);
+  const img = state.sourceImage;
+
+  // 检查是否在图片范围内
+  if (pt.x < state.imageDisplay.x || pt.x > state.imageDisplay.x + state.imageDisplay.width ||
+      pt.y < state.imageDisplay.y || pt.y > state.imageDisplay.y + state.imageDisplay.height) {
+    return;
+  }
+
+  if (hitCropBox(pt.x, pt.y)) {
+    // 移动已有裁剪框
+    state.dragging = true;
+    state.dragTarget = 'move';
+    state.dragStart = imgPt;
+    state.cropBeforeDrag = { ...state.crop };
+  } else {
+    // 新建裁剪框
+    state.dragging = true;
+    state.dragTarget = 'new';
+    state.dragStart = imgPt;
+    state.crop = {
+      active: true,
+      x: imgPt.x,
+      y: imgPt.y,
+      width: 0,
+      height: 0,
+      aspectRatio: getAspectRatio(),
+    };
+    state.cropBeforeDrag = null;
+  }
+
+  canvas.setPointerCapture(e.pointerId);
+  drawPreview();
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!state.dragging || !state.sourceImage) return;
+
+  const pt = canvasCoords(e);
+  const imgPt = toImageCoords(pt.x, pt.y);
+  const img = state.sourceImage;
+
+  // 限制在图片范围内
+  const clampX = Math.max(0, Math.min(img.naturalWidth, imgPt.x));
+  const clampY = Math.max(0, Math.min(img.naturalHeight, imgPt.y));
+
+  if (state.dragTarget === 'move') {
+    const dx = clampX - state.dragStart.x;
+    const dy = clampY - state.dragStart.y;
+    const prev = state.cropBeforeDrag;
+
+    let newX = prev.x + dx;
+    let newY = prev.y + dy;
+
+    // 不超出图片边界
+    if (newX < 0) newX = 0;
+    if (newY < 0) newY = 0;
+    if (newX + prev.width > img.naturalWidth) newX = img.naturalWidth - prev.width;
+    if (newY + prev.height > img.naturalHeight) newY = img.naturalHeight - prev.height;
+
+    state.crop.x = newX;
+    state.crop.y = newY;
+  } else if (state.dragTarget === 'new') {
+    const sx = state.dragStart.x;
+    const sy = state.dragStart.y;
+
+    let w = clampX - sx;
+    let h = clampY - sy;
+
+    // 支持从右下以外的方向拖拽
+    if (w < 0) { state.crop.x = clampX; w = -w; } else { state.crop.x = sx; }
+    if (h < 0) { state.crop.y = clampY; h = -h; } else { state.crop.y = sy; }
+
+    state.crop.width = w;
+    state.crop.height = h;
+
+    // 应用比例约束
+    if (state.crop.aspectRatio) {
+      constrainCropByRatio(state.crop);
+    }
+  }
+
+  // 更新侧边栏信息
+  updateCropInfo();
+  drawPreview();
+});
+
+canvas.addEventListener('pointerup', (e) => {
+  if (!state.dragging) return;
+
+  state.dragging = false;
+  state.dragTarget = null;
+  state.cropBeforeDrag = null;
+  canvas.releasePointerCapture(e.pointerId);
+
+  // 如果裁剪框太小，取消
+  if (state.crop.active && (state.crop.width < 5 || state.crop.height < 5)) {
+    state.crop.active = false;
+    state.crop.width = 0;
+    state.crop.height = 0;
+  }
+
+  updateCropInfo();
+  drawPreview();
+});
+
+canvas.addEventListener('pointerleave', () => {
+  if (state.dragging) {
+    state.dragging = false;
+    state.dragTarget = null;
+    state.cropBeforeDrag = null;
+    drawPreview();
+  }
+});
+
+// 更新光标样式
+canvas.addEventListener('pointermove', (e) => {
+  if (state.dragging || !state.sourceImage || state.mode !== 'crop') return;
+  const pt = canvasCoords(e);
+  if (hitCropBox(pt.x, pt.y)) {
+    canvas.style.cursor = 'move';
+  } else {
+    canvas.style.cursor = 'crosshair';
+  }
+});
+
+// ===== 比例锁定 =====
+function getAspectRatio() {
+  const val = dom.selRatio.value;
+  if (val === 'free') return null;
+  const [w, h] = val.split(':').map(Number);
+  return w / h;
+}
+
+dom.selRatio.addEventListener('change', () => {
+  state.crop.aspectRatio = getAspectRatio();
+  // 如果已有裁剪框，按新比例调整
+  if (state.crop.active && state.crop.aspectRatio) {
+    constrainCropByRatio(state.crop);
+    // 确保不超出图片
+    const img = state.sourceImage;
+    if (state.crop.x + state.crop.width > img.naturalWidth) {
+      state.crop.width = img.naturalWidth - state.crop.x;
+      constrainCropByRatio(state.crop);
+    }
+    if (state.crop.y + state.crop.height > img.naturalHeight) {
+      state.crop.height = img.naturalHeight - state.crop.y;
+      constrainCropByRatio(state.crop);
+    }
+  }
+  updateCropInfo();
+  drawPreview();
+});
+
+function updateCropInfo() {
+  if (state.crop.active) {
+    dom.cropInfoSection.style.display = '';
+    dom.cropInfo.innerHTML =
+      'X: ' + Math.round(state.crop.x) + ' &nbsp; Y: ' + Math.round(state.crop.y) + '<br>' +
+      '宽: ' + Math.round(state.crop.width) + ' &nbsp; 高: ' + Math.round(state.crop.height);
+  } else {
+    dom.cropInfoSection.style.display = 'none';
+  }
+}
+
 // ===== 初始化 =====
 setMode('crop');
 console.log('图片剪裁器 v0.1 — 双模式就绪，图片加载就绪');
