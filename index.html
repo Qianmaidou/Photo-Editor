@@ -386,6 +386,12 @@ html, body {
     <span class="toolbar__divider"></span>
 
     <!-- 裁剪操作 -->
+    <button class="toolbar__btn" id="btnUndo" title="撤销 (Ctrl+Z)" disabled>
+      撤销
+    </button>
+    <button class="toolbar__btn" id="btnRedo" title="重做 (Ctrl+Y)" disabled>
+      重做
+    </button>
     <button class="toolbar__btn" id="btnReset" title="重置" disabled>
       重置
     </button>
@@ -509,6 +515,10 @@ const state = {
   dragStart: { x: 0, y: 0 },
   dragTarget: null,        // 'new' | 'move' | handle-name
   cropBeforeDrag: null,    // 拖拽前的裁剪区域快照
+
+  // 撤销/重做
+  cropHistory: [],         // 裁剪区域快照栈
+  cropHistoryIndex: -1,   // 当前位置，-1 表示无历史
 };
 
 // ===== DOM 引用 =====
@@ -519,6 +529,8 @@ const dom = {
   // 工具栏
   btnOpen:    $('#btnOpen'),
   btnSave:    $('#btnSave'),
+  btnUndo:    $('#btnUndo'),
+  btnRedo:    $('#btnRedo'),
   btnReset:   $('#btnReset'),
   modeToggle: $('#modeToggle'),
 
@@ -632,13 +644,16 @@ async function loadImageFile(file) {
     state.sourceImage = img;
     state.imageFileName = file.name;
 
-    // 重置裁剪区域
+    // 重置裁剪区域和历史
     state.crop = {
       active: false,
       x: 0, y: 0,
       width: 0, height: 0,
       aspectRatio: null,
     };
+    state.cropHistory = [];
+    state.cropHistoryIndex = -1;
+    updateUndoRedoButtons();
 
     // 计算图片显示参数
     fitImageToContainer();
@@ -792,10 +807,10 @@ function drawCropOverlay() {
   ctx.strokeRect(cx, cy, cw, ch);
   ctx.setLineDash([]);
 
-  // 八分线辅助线
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  // 九宫格辅助线
+  ctx.strokeStyle = 'rgba(255,255,255,0.60)';
   ctx.lineWidth = 1;
-  ctx.setLineDash([4, 8]);
+  ctx.setLineDash([4, 6]);
   // 横三分线
   for (let i = 1; i <= 2; i++) {
     const ly = cy + (ch * i) / 3;
@@ -851,9 +866,59 @@ function updateUIAfterLoad(file) {
 // ===== 事件绑定 =====
 dom.btnOpen.addEventListener('click', openImage);
 
+// ===== 撤销/重做 =====
+function pushHistory() {
+  // 丢弃当前索引之后的历史（新操作覆盖重做栈）
+  state.cropHistory = state.cropHistory.slice(0, state.cropHistoryIndex + 1);
+  // 保存当前裁剪状态快照
+  state.cropHistory.push({ ...state.crop });
+  state.cropHistoryIndex = state.cropHistory.length - 1;
+  // 限制历史长度
+  if (state.cropHistory.length > 50) {
+    state.cropHistory.shift();
+    state.cropHistoryIndex--;
+  }
+  updateUndoRedoButtons();
+}
+
+function undo() {
+  if (state.cropHistoryIndex < 0) return;
+  state.cropHistoryIndex--;
+  if (state.cropHistoryIndex >= 0) {
+    state.crop = { ...state.cropHistory[state.cropHistoryIndex] };
+  } else {
+    resetCrop();
+  }
+  updateUndoRedoButtons();
+  updateCropInfo();
+  drawPreview();
+}
+
+function redo() {
+  if (state.cropHistoryIndex >= state.cropHistory.length - 1) return;
+  state.cropHistoryIndex++;
+  state.crop = { ...state.cropHistory[state.cropHistoryIndex] };
+  updateUndoRedoButtons();
+  updateCropInfo();
+  drawPreview();
+}
+
+function updateUndoRedoButtons() {
+  dom.btnUndo.disabled = state.cropHistoryIndex < 0;
+  dom.btnRedo.disabled = state.cropHistoryIndex >= state.cropHistory.length - 1;
+}
+
+// 在裁剪框变化确定后记录历史（pointerup 时调用）
+function commitCropHistory() {
+  if (state.crop.active && state.crop.width >= 5 && state.crop.height >= 5) {
+    pushHistory();
+  }
+}
+
 // 重置按钮
 dom.btnReset.addEventListener('click', () => {
   if (state.mode === 'crop') {
+    if (state.crop.active) pushHistory(); // 记录当前状态再重置
     resetCrop();
     updateCropInfo();
   } else {
@@ -863,6 +928,24 @@ dom.btnReset.addEventListener('click', () => {
     }
   }
   drawPreview();
+});
+
+// 撤销/重做按钮
+dom.btnUndo.addEventListener('click', undo);
+dom.btnRedo.addEventListener('click', redo);
+
+// 键盘快捷键
+document.addEventListener('keydown', (e) => {
+  // Ctrl+Z 撤销
+  if (e.ctrlKey && !e.shiftKey && e.key === 'z') {
+    e.preventDefault();
+    undo();
+  }
+  // Ctrl+Y 或 Ctrl+Shift+Z 重做
+  if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+    e.preventDefault();
+    redo();
+  }
 });
 
 // ===== 保存 =====
@@ -1268,6 +1351,9 @@ canvas.addEventListener('pointerup', (e) => {
     state.crop.width = 0;
     state.crop.height = 0;
   }
+
+  // 有效拖拽结束后记录历史
+  commitCropHistory();
 
   updateCropInfo();
   drawPreview();
