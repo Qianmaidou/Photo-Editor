@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图片剪裁器</title>
+<style>
+/* ===== Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* 天蓝 - 蓝配色 */
+  --sky-light:   #e3f2fd;
+  --sky-surface: #bbdefb;
+  --sky-primary: #42a5f5;
+  --blue-accent: #1e88e5;
+  --blue-deep:   #0d47a1;
+  --blue-dark:   #0a1929;
+
+  /* 中性色 */
+  --gray-50:  #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --gray-900: #0f172a;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+  --shadow-lg: 0 10px 15px rgba(0,0,0,0.1), 0 4px 6px rgba(0,0,0,0.05);
+  --shadow-xl: 0 20px 25px rgba(0,0,0,0.1), 0 10px 10px rgba(0,0,0,0.04);
+
+  /* 过渡 */
+  --transition: 0.2s ease;
+}
+
+html, body {
+  height: 100%;
+  font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--gray-800);
+  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 30%, #e8eaf6 70%, #f1f5f9 100%);
+  background-attachment: fixed;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ===== App Layout ===== */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  gap: 10px;
+}
+
+/* ===== Toolbar ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar__brand {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--blue-deep);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+.toolbar__divider {
+  width: 1px;
+  height: 24px;
+  background: var(--gray-300);
+  margin: 0 4px;
+}
+
+.toolbar__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--gray-700);
+  background: rgba(255,255,255,0.8);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.toolbar__btn:hover {
+  background: var(--sky-light);
+  border-color: var(--sky-primary);
+  color: var(--blue-deep);
+}
+
+.toolbar__btn--primary {
+  color: #fff;
+  background: var(--sky-primary);
+  border-color: var(--sky-primary);
+}
+
+.toolbar__btn--primary:hover {
+  background: var(--blue-accent);
+  border-color: var(--blue-accent);
+  color: #fff;
+}
+
+.toolbar__btn:active {
+  transform: scale(0.97);
+}
+
+/* ===== Mode Toggle (Segmented Control) ===== */
+.mode-toggle {
+  display: flex;
+  background: rgba(0,0,0,0.04);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+}
+
+.mode-toggle__btn {
+  padding: 6px 18px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--gray-600);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.mode-toggle__btn:hover {
+  color: var(--gray-800);
+}
+
+.mode-toggle__btn--active {
+  color: var(--blue-deep);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ===== Sidebar Sections ===== */
+.sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+
+.sidebar__input {
+  padding: 8px 12px;
+  font-size: 15px;
+  font-family: inherit;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.9);
+  color: var(--gray-800);
+  outline: none;
+  transition: border-color var(--transition);
+  width: 100%;
+}
+
+.sidebar__input:focus {
+  border-color: var(--sky-primary);
+  box-shadow: 0 0 0 3px rgba(66,165,245,0.15);
+}
+
+.sidebar__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sidebar__preset {
+  padding: 5px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--gray-600);
+  background: rgba(255,255,255,0.8);
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.sidebar__preset:hover {
+  background: var(--sky-light);
+  border-color: var(--sky-primary);
+  color: var(--blue-deep);
+}
+
+.sidebar__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar__row .sidebar__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar__dim-sep {
+  color: var(--gray-400);
+  font-size: 14px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.sidebar__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--gray-600);
+  cursor: pointer;
+}
+
+.sidebar__checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--sky-primary);
+}
+
+/* ===== Main ===== */
+.main {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* ===== Canvas Container ===== */
+.canvas-container {
+  flex: 1;
+  position: relative;
+  background: rgba(255,255,255,0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-container__empty {
+  text-align: center;
+  color: var(--gray-400);
+}
+
+.canvas-container__empty p {
+  font-size: 17px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.canvas-container__empty span {
+  font-size: 14px;
+  color: var(--gray-400);
+}
+
+/* ===== Sidebar (placeholder for later) ===== */
+.sidebar {
+  width: 260px;
+  background: rgba(255,255,255,0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.sidebar__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+
+/* ===== Status Bar ===== */
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--gray-500);
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.5);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.statusbar__left,
+.statusbar__right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+</style>
+</head>
+<body>
+
+<!-- ===== 应用容器 ===== -->
+<div class="app">
+
+  <!-- 工具栏 -->
+  <header class="toolbar">
+    <span class="toolbar__brand">图片剪裁器</span>
+
+    <span class="toolbar__divider"></span>
+
+    <!-- 模式切换 -->
+    <div class="mode-toggle" id="modeToggle">
+      <button class="mode-toggle__btn mode-toggle__btn--active" data-mode="crop">裁剪</button>
+      <button class="mode-toggle__btn" data-mode="resize">缩放</button>
+    </div>
+
+    <span class="toolbar__divider"></span>
+
+    <!-- 文件操作 -->
+    <button class="toolbar__btn toolbar__btn--primary" id="btnOpen" title="打开图片">
+      打开图片
+    </button>
+    <button class="toolbar__btn toolbar__btn--primary" id="btnSave" title="保存裁剪结果" disabled>
+      保存结果
+    </button>
+
+    <span class="toolbar__divider"></span>
+
+    <!-- 裁剪操作 -->
+    <button class="toolbar__btn" id="btnReset" title="重置" disabled>
+      重置
+    </button>
+  </header>
+
+  <!-- 主体区域 -->
+  <main class="main">
+    <!-- 画布容器 -->
+    <div class="canvas-container" id="canvasContainer">
+      <div class="canvas-container__empty" id="emptyState">
+        <p>打开一张图片开始裁剪</p>
+        <span>支持 JPG、PNG、WebP、BMP 等常见格式</span>
+      </div>
+    </div>
+
+    <!-- 右侧面板 -->
+    <aside class="sidebar" id="sidebar">
+
+      <!-- 裁剪模式面板 -->
+      <div id="panelCrop" class="sidebar__section">
+        <div class="sidebar__title">裁剪设置</div>
+
+        <div class="sidebar__section">
+          <label class="sidebar__label">比例锁定</label>
+          <select class="sidebar__input" id="selRatio">
+            <option value="free">自由比例</option>
+            <option value="1:1">1:1 正方形</option>
+            <option value="4:3">4:3</option>
+            <option value="3:2">3:2</option>
+            <option value="16:9">16:9</option>
+          </select>
+        </div>
+
+        <div class="sidebar__section" id="cropInfoSection" style="display:none;">
+          <label class="sidebar__label">裁剪区域</label>
+          <div id="cropInfo" style="font-size:13px; color: var(--gray-600);"></div>
+        </div>
+      </div>
+
+      <!-- 缩放模式面板 -->
+      <div id="panelResize" class="sidebar__section" style="display:none;">
+        <div class="sidebar__title">缩放设置</div>
+
+        <div class="sidebar__section">
+          <label class="sidebar__label">目标尺寸（像素）</label>
+          <div class="sidebar__row">
+            <input class="sidebar__input" id="resizeWidth" type="number" min="1" max="10000" placeholder="宽" value="800">
+            <span class="sidebar__dim-sep">×</span>
+            <input class="sidebar__input" id="resizeHeight" type="number" min="1" max="10000" placeholder="高" value="600">
+          </div>
+          <label class="sidebar__checkbox">
+            <input type="checkbox" id="resizeKeepRatio" checked>
+            保持原图宽高比
+          </label>
+        </div>
+
+        <div class="sidebar__section">
+          <label class="sidebar__label">预设尺寸</label>
+          <div class="sidebar__presets">
+            <button class="sidebar__preset" data-w="800" data-h="600">800×600</button>
+            <button class="sidebar__preset" data-w="1024" data-h="768">1024×768</button>
+            <button class="sidebar__preset" data-w="333" data-h="500">333×500</button>
+            <button class="sidebar__preset" data-w="500" data-h="333">500×333</button>
+            <button class="sidebar__preset" data-w="1920" data-h="1080">1920×1080</button>
+            <button class="sidebar__preset" data-w="1080" data-h="1920">1080×1920</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 未加载图片提示 -->
+      <div id="sidebarEmpty" style="font-size:13px; color: var(--gray-400);">尚未加载图片</div>
+    </aside>
+  </main>
+
+  <!-- 状态栏 -->
+  <footer class="statusbar">
+    <div class="statusbar__left">
+      <span id="statusFile">未打开文件</span>
+    </div>
+    <div class="statusbar__right">
+      <span id="statusSize">—</span>
+    </div>
+  </footer>
+</div>
+
+<!-- 隐藏的文件选择器（兜底用） -->
+<input type="file" id="fileInput" accept="image/*" style="display:none">
+
+<script>
+// ===== 应用状态 =====
+const state = {
+  mode: 'crop',            // 'crop' | 'resize'
+  sourceImage: null,       // 原始图片 Image 对象
+  imageFile: null,         // 原始文件句柄
+  imageFileName: '',       // 原始文件名
+
+  // 缩放后的图片显示参数（canvas 坐标系）
+  imageDisplay: {
+    x: 0, y: 0,            // 图片在 canvas 上的左上角
+    width: 0, height: 0,   // 图片在 canvas 上的显示尺寸
+    scale: 1,              // 图片缩放比例 = displayWidth / naturalWidth
+  },
+
+  // 裁剪区域（原始图片像素坐标）
+  crop: {
+    active: false,
+    x: 0, y: 0,            // 裁剪区域左上角
+    width: 0, height: 0,  // 裁剪区域尺寸
+    aspectRatio: null,     // null = 自由比例
+  },
+
+  // 拖拽状态
+  dragging: false,
+  dragStart: { x: 0, y: 0 },
+  dragTarget: null,        // 'new' | 'move' | handle-name
+  cropBeforeDrag: null,    // 拖拽前的裁剪区域快照
+};
+
+// ===== DOM 引用 =====
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+const dom = {
+  // 工具栏
+  btnOpen:    $('#btnOpen'),
+  btnSave:    $('#btnSave'),
+  btnReset:   $('#btnReset'),
+  modeToggle: $('#modeToggle'),
+
+  // 画布
+  container:  $('#canvasContainer'),
+  emptyState: $('#emptyState'),
+
+  // 裁剪面板
+  panelCrop:       $('#panelCrop'),
+  selRatio:        $('#selRatio'),
+  cropInfoSection: $('#cropInfoSection'),
+  cropInfo:        $('#cropInfo'),
+
+  // 缩放面板
+  panelResize:   $('#panelResize'),
+  resizeWidth:   $('#resizeWidth'),
+  resizeHeight:  $('#resizeHeight'),
+  resizeKeepRatio: $('#resizeKeepRatio'),
+
+  // 侧边栏
+  sidebarEmpty: $('#sidebarEmpty'),
+
+  // 状态栏
+  statusFile: $('#statusFile'),
+  statusSize: $('#statusSize'),
+
+  // 隐藏的 file input
+  fileInput: $('#fileInput'),
+};
+
+// ===== 模式切换 =====
+function setMode(mode) {
+  state.mode = mode;
+
+  // 更新模式按钮状态
+  $$('.mode-toggle__btn').forEach(btn => {
+    btn.classList.toggle('mode-toggle__btn--active', btn.dataset.mode === mode);
+  });
+
+  // 切换侧边栏面板
+  const hasImage = state.sourceImage !== null;
+  dom.panelCrop.style.display = mode === 'crop' && hasImage ? '' : 'none';
+  dom.panelResize.style.display = mode === 'resize' && hasImage ? '' : 'none';
+  dom.sidebarEmpty.style.display = hasImage ? 'none' : '';
+
+  // 更新重置按钮文字
+  dom.btnReset.textContent = mode === 'crop' ? '重置裁剪' : '重置尺寸';
+}
+
+dom.modeToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('.mode-toggle__btn');
+  if (!btn) return;
+  setMode(btn.dataset.mode);
+});
+
+// ===== 初始化 =====
+setMode('crop');
+console.log('图片剪裁器 v0.1 — 骨架就绪，双模式已就绪');
+</script>
+
+</body>
+</html>
