@@ -305,6 +305,10 @@ html, body {
   color: var(--gray-400);
 }
 
+.canvas-container canvas {
+  display: block;
+}
+
 /* ===== Sidebar (placeholder for later) ===== */
 .sidebar {
   width: 260px;
@@ -411,8 +415,15 @@ html, body {
             <option value="1:1">1:1 正方形</option>
             <option value="4:3">4:3</option>
             <option value="3:2">3:2</option>
-            <option value="16:9">16:9</option>
+            <option value="16:9">16:9 横屏</option>
+            <option value="9:16">9:16 竖屏</option>
+            <option value="custom">自定义...</option>
           </select>
+          <div id="customRatioRow" class="sidebar__row" style="display:none; margin-top:4px;">
+            <input class="sidebar__input" id="customRatioW" type="number" min="1" max="100" placeholder="宽" value="16" style="width:60px;">
+            <span class="sidebar__dim-sep">:</span>
+            <input class="sidebar__input" id="customRatioH" type="number" min="1" max="100" placeholder="高" value="9" style="width:60px;">
+          </div>
         </div>
 
         <div class="sidebar__section" id="cropInfoSection" style="display:none;">
@@ -518,6 +529,9 @@ const dom = {
   // 裁剪面板
   panelCrop:       $('#panelCrop'),
   selRatio:        $('#selRatio'),
+  customRatioRow:  $('#customRatioRow'),
+  customRatioW:    $('#customRatioW'),
+  customRatioH:    $('#customRatioH'),
   cropInfoSection: $('#cropInfoSection'),
   cropInfo:        $('#cropInfo'),
 
@@ -645,14 +659,18 @@ async function loadImageFile(file) {
 
 function fitImageToContainer() {
   const img = state.sourceImage;
+  const dpr = window.devicePixelRatio || 1;
   const cw = dom.container.clientWidth;
   const ch = dom.container.clientHeight;
 
-  // canvas 填满容器
-  canvas.width = cw;
-  canvas.height = ch;
+  // canvas 内部分辨率按 DPR 乘以像素密度，避免模糊
+  canvas.width = cw * dpr;
+  canvas.height = ch * dpr;
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // 计算图片适配容器的尺寸（留 40px 边距）
+  // 以下计算使用逻辑像素（与 CSS 一致）
   const padding = 40;
   const maxW = cw - padding * 2;
   const maxH = ch - padding * 2;
@@ -741,6 +759,21 @@ function updateUIAfterLoad(file) {
 
 // ===== 事件绑定 =====
 dom.btnOpen.addEventListener('click', openImage);
+
+// 重置按钮
+dom.btnReset.addEventListener('click', () => {
+  if (state.mode === 'crop') {
+    resetCrop();
+    updateCropInfo();
+  } else {
+    // 缩放模式：恢复原图尺寸
+    if (state.sourceImage) {
+      dom.resizeWidth.value = state.sourceImage.naturalWidth;
+      dom.resizeHeight.value = state.sourceImage.naturalHeight;
+    }
+  }
+  drawPreview();
+});
 
 dom.fileInput.addEventListener('change', () => {
   const file = dom.fileInput.files[0];
@@ -930,29 +963,54 @@ canvas.addEventListener('pointermove', (e) => {
 // ===== 比例锁定 =====
 function getAspectRatio() {
   const val = dom.selRatio.value;
-  if (val === 'free') return null;
+  if (val === 'free' || val === 'custom') return null;
+  if (val === 'custom') return null;
   const [w, h] = val.split(':').map(Number);
   return w / h;
 }
 
+function getCustomAspectRatio() {
+  const w = parseInt(dom.customRatioW.value) || 16;
+  const h = parseInt(dom.customRatioH.value) || 9;
+  return w / h;
+}
+
+function resetCrop() {
+  state.crop = {
+    active: false,
+    x: 0, y: 0,
+    width: 0, height: 0,
+    aspectRatio: state.crop.aspectRatio,
+  };
+}
+
 dom.selRatio.addEventListener('change', () => {
-  state.crop.aspectRatio = getAspectRatio();
-  // 如果已有裁剪框，按新比例调整
-  if (state.crop.active && state.crop.aspectRatio) {
-    constrainCropByRatio(state.crop);
-    // 确保不超出图片
-    const img = state.sourceImage;
-    if (state.crop.x + state.crop.width > img.naturalWidth) {
-      state.crop.width = img.naturalWidth - state.crop.x;
-      constrainCropByRatio(state.crop);
-    }
-    if (state.crop.y + state.crop.height > img.naturalHeight) {
-      state.crop.height = img.naturalHeight - state.crop.y;
-      constrainCropByRatio(state.crop);
-    }
-  }
+  const val = dom.selRatio.value;
+
+  // 显示/隐藏自定义比例输入
+  dom.customRatioRow.style.display = val === 'custom' ? '' : 'none';
+
+  // 切换比例时清除已有裁剪框，让用户重新拖拽
+  state.crop.aspectRatio = val === 'custom' ? getCustomAspectRatio() : getAspectRatio();
+  resetCrop();
   updateCropInfo();
   drawPreview();
+});
+
+// 自定义比例输入变化时更新
+dom.customRatioW.addEventListener('input', () => {
+  if (dom.selRatio.value === 'custom') {
+    state.crop.aspectRatio = getCustomAspectRatio();
+    resetCrop();
+    drawPreview();
+  }
+});
+dom.customRatioH.addEventListener('input', () => {
+  if (dom.selRatio.value === 'custom') {
+    state.crop.aspectRatio = getCustomAspectRatio();
+    resetCrop();
+    drawPreview();
+  }
 });
 
 function updateCropInfo() {
