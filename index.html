@@ -569,6 +569,9 @@ function setMode(mode) {
 
   // 更新重置按钮文字
   dom.btnReset.textContent = mode === 'crop' ? '重置裁剪' : '重置尺寸';
+
+  // 刷新预览
+  if (hasImage) drawPreview();
 }
 
 dom.modeToggle.addEventListener('click', (e) => {
@@ -692,18 +695,60 @@ function fitImageToContainer() {
 function drawPreview() {
   if (!state.sourceImage) return;
 
-  const { x, y, width, height } = state.imageDisplay;
-  const img = state.sourceImage;
-
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 绘制图片
+  if (state.mode === 'resize') {
+    drawResizePreview();
+  } else {
+    drawCropPreview();
+  }
+}
+
+function drawCropPreview() {
+  const { x, y, width, height } = state.imageDisplay;
+  const img = state.sourceImage;
   ctx.drawImage(img, x, y, width, height);
 
-  // 裁剪模式：绘制裁剪框
-  if (state.mode === 'crop' && state.crop.active) {
+  if (state.crop.active) {
     drawCropOverlay();
   }
+}
+
+function drawResizePreview() {
+  const img = state.sourceImage;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.width / dpr;
+  const ch = canvas.height / dpr;
+
+  // 读取当前目标尺寸
+  const tw = parseInt(dom.resizeWidth.value) || img.naturalWidth;
+  const th = parseInt(dom.resizeHeight.value) || img.naturalHeight;
+
+  // 将预览缩放到适合容器
+  const padding = 60;
+  const maxW = cw - padding * 2;
+  const maxH = ch - padding * 2;
+  const scale = Math.min(maxW / tw, maxH / th, 1);
+  const px = (cw - tw * scale) / 2;
+  const py = (ch - th * scale) / 2;
+
+  // 淡化原图作为背景参照
+  ctx.globalAlpha = 0.15;
+  ctx.drawImage(img, state.imageDisplay.x, state.imageDisplay.y,
+    state.imageDisplay.width, state.imageDisplay.height);
+  ctx.globalAlpha = 1;
+
+  // 绘制缩放后预览
+  ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, px, py, tw * scale, th * scale);
+
+  // 预览尺寸标签
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  const label = '预览  ' + tw + ' × ' + th + ' px';
+  ctx.font = '13px "Segoe UI Variable", "Microsoft YaHei", sans-serif';
+  const lm = ctx.measureText(label);
+  ctx.fillRect(px, py - 28, lm.width + 20, 26);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(label, px + 10, py - 10);
 }
 
 function drawCropOverlay() {
@@ -868,6 +913,55 @@ function fallbackDownload(blob) {
 }
 
 dom.btnSave.addEventListener('click', saveResult);
+
+// ===== 缩放模式交互 =====
+function onResizeInputChange() {
+  if (state.mode !== 'resize' || !state.sourceImage) return;
+
+  let tw = parseInt(dom.resizeWidth.value) || state.sourceImage.naturalWidth;
+  let th = parseInt(dom.resizeHeight.value) || state.sourceImage.naturalHeight;
+
+  if (dom.resizeKeepRatio.checked) {
+    const ratio = state.sourceImage.naturalWidth / state.sourceImage.naturalHeight;
+    // 判断哪个输入框最后被修改
+    if (document.activeElement === dom.resizeWidth) {
+      th = Math.round(tw / ratio);
+      dom.resizeHeight.value = th;
+    } else if (document.activeElement === dom.resizeHeight) {
+      tw = Math.round(th * ratio);
+      dom.resizeWidth.value = tw;
+    }
+  }
+
+  drawPreview();
+}
+
+dom.resizeWidth.addEventListener('input', onResizeInputChange);
+dom.resizeHeight.addEventListener('input', onResizeInputChange);
+dom.resizeKeepRatio.addEventListener('change', () => {
+  if (dom.resizeKeepRatio.checked && state.sourceImage) {
+    // 重新以宽度为基准计算高度
+    const tw = parseInt(dom.resizeWidth.value) || state.sourceImage.naturalWidth;
+    const ratio = state.sourceImage.naturalWidth / state.sourceImage.naturalHeight;
+    dom.resizeHeight.value = Math.round(tw / ratio);
+  }
+  drawPreview();
+});
+
+// 预设尺寸按钮
+dom.panelResize.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sidebar__preset');
+  if (!btn) return;
+  const w = parseInt(btn.dataset.w);
+  const h = parseInt(btn.dataset.h);
+  if (w && h) {
+    dom.resizeWidth.value = w;
+    dom.resizeHeight.value = h;
+    dom.resizeKeepRatio.checked = false;
+    drawPreview();
+  }
+});
+
 
 dom.fileInput.addEventListener('change', () => {
   const file = dom.fileInput.files[0];
