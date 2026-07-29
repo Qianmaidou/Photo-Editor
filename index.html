@@ -751,22 +751,39 @@ function drawResizePreview() {
   ctx.fillText(label, px + 10, py - 10);
 }
 
+// 手柄定义：名称 → 在裁剪框上的锚点位置 (0-1)
+const HANDLE_DEFS = {
+  nw: { ax: 0, ay: 0, cursor: 'nwse-resize' },
+  n:  { ax: 0.5, ay: 0, cursor: 'ns-resize' },
+  ne: { ax: 1, ay: 0, cursor: 'nesw-resize' },
+  e:  { ax: 1, ay: 0.5, cursor: 'ew-resize' },
+  se: { ax: 1, ay: 1, cursor: 'nwse-resize' },
+  s:  { ax: 0.5, ay: 1, cursor: 'ns-resize' },
+  sw: { ax: 0, ay: 1, cursor: 'nesw-resize' },
+  w:  { ax: 0, ay: 0.5, cursor: 'ew-resize' },
+};
+const HANDLE_SIZE = 10; // 手柄半径（逻辑像素）
+
+function getCropBoxCanvas() {
+  const d = state.imageDisplay;
+  const c = state.crop;
+  return {
+    cx: d.x + c.x * d.scale,
+    cy: d.y + c.y * d.scale,
+    cw: c.width * d.scale,
+    ch: c.height * d.scale,
+  };
+}
+
 function drawCropOverlay() {
-  const { x, y, width, height, scale } = state.imageDisplay;
-  const crop = state.crop;
+  const { cx, cy, cw, ch } = getCropBoxCanvas();
 
-  // 裁剪框在 canvas 上的坐标
-  const cx = x + crop.x * scale;
-  const cy = y + crop.y * scale;
-  const cw = crop.width * scale;
-  const ch = crop.height * scale;
-
-  // 暗色遮罩（四个矩形围绕裁剪框）
+  // 暗色遮罩
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, canvas.width, cy);                        // 上
-  ctx.fillRect(0, cy, cx, ch);                                  // 左
-  ctx.fillRect(cx + cw, cy, canvas.width - cx - cw, ch);        // 右
-  ctx.fillRect(0, cy + ch, canvas.width, canvas.height - cy - ch); // 下
+  ctx.fillRect(0, 0, canvas.width, cy);
+  ctx.fillRect(0, cy, cx, ch);
+  ctx.fillRect(cx + cw, cy, canvas.width - cx - cw, ch);
+  ctx.fillRect(0, cy + ch, canvas.width, canvas.height - cy - ch);
 
   // 裁剪框边框
   ctx.strokeStyle = '#fff';
@@ -774,6 +791,35 @@ function drawCropOverlay() {
   ctx.setLineDash([6, 3]);
   ctx.strokeRect(cx, cy, cw, ch);
   ctx.setLineDash([]);
+
+  // 八分线辅助线
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 8]);
+  // 横三分线
+  for (let i = 1; i <= 2; i++) {
+    const ly = cy + (ch * i) / 3;
+    ctx.beginPath(); ctx.moveTo(cx, ly); ctx.lineTo(cx + cw, ly); ctx.stroke();
+  }
+  // 竖三分线
+  for (let i = 1; i <= 2; i++) {
+    const lx = cx + (cw * i) / 3;
+    ctx.beginPath(); ctx.moveTo(lx, cy); ctx.lineTo(lx, cy + ch); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // 八角手柄
+  const hs = HANDLE_SIZE;
+  for (const [name, def] of Object.entries(HANDLE_DEFS)) {
+    const hx = cx + cw * def.ax;
+    const hy = cy + ch * def.ay;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.strokeRect(hx - hs / 2, hy - hs / 2, hs, hs);
+  }
 }
 
 function updateUIAfterLoad(file) {
@@ -1001,21 +1047,59 @@ function toCanvasCoords(ix, iy) {
   };
 }
 
-// 检测 canvas 坐标是否在裁剪框内
-function hitCropBox(cx, cy) {
-  if (!state.crop.active) return false;
-  const box = toCanvasCoords(state.crop.x, state.crop.y);
-  const bw = state.crop.width * state.imageDisplay.scale;
-  const bh = state.crop.height * state.imageDisplay.scale;
-  return cx >= box.x && cx <= box.x + bw && cy >= box.y && cy <= box.y + bh;
+// 检测 canvas 坐标命中了哪个手柄（或内部/外部）
+function hitCropHandle(cx, cy) {
+  if (!state.crop.active) return null;
+  const box = getCropBoxCanvas();
+  const hs = HANDLE_SIZE + 2; // 稍微放大热区
+
+  // 先检测手柄（手柄优先级高于内部移动）
+  for (const [name, def] of Object.entries(HANDLE_DEFS)) {
+    const hx = box.cx + box.cw * def.ax;
+    const hy = box.cy + box.ch * def.ay;
+    if (Math.abs(cx - hx) <= hs && Math.abs(cy - hy) <= hs) {
+      return name; // 返回手柄名
+    }
+  }
+
+  // 再检测是否在裁剪框内部
+  if (cx >= box.cx && cx <= box.cx + box.cw &&
+      cy >= box.cy && cy <= box.cy + box.ch) {
+    return 'move';
+  }
+
+  return null; // 点击在裁剪框外
 }
 
-// 根据比例约束调整裁剪框
-function constrainCropByRatio(crop) {
-  if (!crop.aspectRatio) return;
+// 根据比例约束调整裁剪框（保持中心点不变，按比例从宽度推算高度）
+function applyRatioConstraint(crop, anchorX, anchorY) {
+  if (!crop.aspectRatio || crop.aspectRatio <= 0) return;
   const ratio = crop.aspectRatio;
-  // 以宽度为基准调整高度
-  crop.height = crop.width / ratio;
+  const targetH = crop.width / ratio;
+  // 基于锚点调整 y 和 height
+  if (anchorY === 'top') {
+    crop.height = targetH;
+  } else if (anchorY === 'bottom') {
+    const bottom = crop.y + crop.height;
+    crop.height = targetH;
+    crop.y = bottom - crop.height;
+  } else {
+    // center anchor
+    const centerY = crop.y + crop.height / 2;
+    crop.height = targetH;
+    crop.y = centerY - crop.height / 2;
+  }
+}
+
+// 确保裁剪框不超出图片，且最小尺寸 >= 1
+function clampCrop(img) {
+  const c = state.crop;
+  if (c.width < 1) c.width = 1;
+  if (c.height < 1) c.height = 1;
+  if (c.x < 0) c.x = 0;
+  if (c.y < 0) c.y = 0;
+  if (c.x + c.width > img.naturalWidth) c.width = img.naturalWidth - c.x;
+  if (c.y + c.height > img.naturalHeight) c.height = img.naturalHeight - c.y;
 }
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -1026,13 +1110,20 @@ canvas.addEventListener('pointerdown', (e) => {
   const img = state.sourceImage;
 
   // 检查是否在图片范围内
-  if (pt.x < state.imageDisplay.x || pt.x > state.imageDisplay.x + state.imageDisplay.width ||
-      pt.y < state.imageDisplay.y || pt.y > state.imageDisplay.y + state.imageDisplay.height) {
-    return;
-  }
+  const inImage = pt.x >= state.imageDisplay.x && pt.x <= state.imageDisplay.x + state.imageDisplay.width &&
+                  pt.y >= state.imageDisplay.y && pt.y <= state.imageDisplay.y + state.imageDisplay.height;
+  if (!inImage) return;
 
-  if (hitCropBox(pt.x, pt.y)) {
-    // 移动已有裁剪框
+  const hit = hitCropHandle(pt.x, pt.y);
+
+  if (hit && hit !== 'move') {
+    // 拖拽手柄：缩放裁剪框
+    state.dragging = true;
+    state.dragTarget = hit; // 'nw', 'n', 'ne', etc.
+    state.dragStart = imgPt;
+    state.cropBeforeDrag = { ...state.crop };
+  } else if (hit === 'move') {
+    // 移动裁剪框
     state.dragging = true;
     state.dragTarget = 'move';
     state.dragStart = imgPt;
@@ -1064,7 +1155,6 @@ canvas.addEventListener('pointermove', (e) => {
   const imgPt = toImageCoords(pt.x, pt.y);
   const img = state.sourceImage;
 
-  // 限制在图片范围内
   const clampX = Math.max(0, Math.min(img.naturalWidth, imgPt.x));
   const clampY = Math.max(0, Math.min(img.naturalHeight, imgPt.y));
 
@@ -1075,8 +1165,6 @@ canvas.addEventListener('pointermove', (e) => {
 
     let newX = prev.x + dx;
     let newY = prev.y + dy;
-
-    // 不超出图片边界
     if (newX < 0) newX = 0;
     if (newY < 0) newY = 0;
     if (newX + prev.width > img.naturalWidth) newX = img.naturalWidth - prev.width;
@@ -1084,27 +1172,85 @@ canvas.addEventListener('pointermove', (e) => {
 
     state.crop.x = newX;
     state.crop.y = newY;
+
   } else if (state.dragTarget === 'new') {
-    const sx = state.dragStart.x;
-    const sy = state.dragStart.y;
-
-    let w = clampX - sx;
-    let h = clampY - sy;
-
-    // 支持从右下以外的方向拖拽
+    const sx = state.dragStart.x, sy = state.dragStart.y;
+    let w = clampX - sx, h = clampY - sy;
     if (w < 0) { state.crop.x = clampX; w = -w; } else { state.crop.x = sx; }
     if (h < 0) { state.crop.y = clampY; h = -h; } else { state.crop.y = sy; }
-
     state.crop.width = w;
     state.crop.height = h;
+    if (state.crop.aspectRatio) {
+      state.crop.height = state.crop.width / state.crop.aspectRatio;
+    }
+    // 处理反向拖拽时从上方/左侧超出
+    if (state.crop.y + state.crop.height > img.naturalHeight) {
+      state.crop.height = img.naturalHeight - state.crop.y;
+      if (state.crop.aspectRatio) state.crop.width = state.crop.height * state.crop.aspectRatio;
+    }
+
+  } else {
+    // 拖拽手柄缩放
+    const prev = state.cropBeforeDrag;
+    const handleDef = HANDLE_DEFS[state.dragTarget];
+    if (!handleDef) return;
+
+    // 根据手柄的锚点方向决定如何调整
+    const hax = handleDef.ax; // 0, 0.5, or 1
+    const hay = handleDef.ay; // 0, 0.5, or 1
+
+    let newCrop = { x: prev.x, y: prev.y, width: prev.width, height: prev.height, aspectRatio: prev.aspectRatio };
+
+    // 水平方向
+    if (hax === 0) {
+      // 左边缘：调整 x 和 width
+      const right = prev.x + prev.width;
+      newCrop.x = Math.min(clampX, right - 1);
+      newCrop.width = right - newCrop.x;
+    } else if (hax === 1) {
+      // 右边缘：调整 width
+      newCrop.width = Math.max(1, clampX - prev.x);
+    }
+
+    // 垂直方向
+    if (hay === 0) {
+      const bottom = prev.y + prev.height;
+      newCrop.y = Math.min(clampY, bottom - 1);
+      newCrop.height = bottom - newCrop.y;
+    } else if (hay === 1) {
+      newCrop.height = Math.max(1, clampY - prev.y);
+    }
 
     // 应用比例约束
-    if (state.crop.aspectRatio) {
-      constrainCropByRatio(state.crop);
+    if (newCrop.aspectRatio) {
+      const ratio = newCrop.aspectRatio;
+      // 优先以变化的维度为准
+      if (hax !== 0.5 && hay === 0.5) {
+        // 只有水平变化：按比例算高度
+        newCrop.height = newCrop.width / ratio;
+      } else if (hay !== 0.5 && hax === 0.5) {
+        // 只有垂直变化：按比例算宽度
+        newCrop.width = newCrop.height * ratio;
+      } else if (hax === 0.5 && hay === 0.5) {
+        // 中心：不应该出现
+      } else {
+        // 角手柄：以宽度为基准
+        newCrop.height = newCrop.width / ratio;
+        // 如果高度方向锚点在顶部，调整 y
+        if (hay === 0) {
+          const bottom = prev.y + prev.height;
+          newCrop.y = bottom - newCrop.height;
+        }
+      }
     }
+
+    state.crop.x = newCrop.x;
+    state.crop.y = newCrop.y;
+    state.crop.width = newCrop.width;
+    state.crop.height = newCrop.height;
+    clampCrop(img);
   }
 
-  // 更新侧边栏信息
   updateCropInfo();
   drawPreview();
 });
@@ -1117,7 +1263,6 @@ canvas.addEventListener('pointerup', (e) => {
   state.cropBeforeDrag = null;
   canvas.releasePointerCapture(e.pointerId);
 
-  // 如果裁剪框太小，取消
   if (state.crop.active && (state.crop.width < 5 || state.crop.height < 5)) {
     state.crop.active = false;
     state.crop.width = 0;
@@ -1141,7 +1286,10 @@ canvas.addEventListener('pointerleave', () => {
 canvas.addEventListener('pointermove', (e) => {
   if (state.dragging || !state.sourceImage || state.mode !== 'crop') return;
   const pt = canvasCoords(e);
-  if (hitCropBox(pt.x, pt.y)) {
+  const hit = hitCropHandle(pt.x, pt.y);
+  if (hit && hit !== 'move') {
+    canvas.style.cursor = HANDLE_DEFS[hit].cursor;
+  } else if (hit === 'move') {
     canvas.style.cursor = 'move';
   } else {
     canvas.style.cursor = 'crosshair';
