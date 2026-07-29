@@ -45,6 +45,91 @@
   --transition: 0.2s ease;
 }
 
+/* ===== 深色主题 ===== */
+[data-theme="dark"] {
+  --sky-light:   #1a2332;
+  --sky-surface: #1e3a5f;
+  --sky-primary: #42a5f5;
+  --blue-accent: #64b5f6;
+  --blue-deep:   #90caf9;
+  --blue-dark:   #0d2137;
+
+  --gray-50:  #1e293b;
+  --gray-100: #1e293b;
+  --gray-200: #334155;
+  --gray-300: #475569;
+  --gray-400: #64748b;
+  --gray-500: #94a3b8;
+  --gray-600: #cbd5e1;
+  --gray-700: #e2e8f0;
+  --gray-800: #f1f5f9;
+  --gray-900: #f8fafc;
+}
+
+[data-theme="dark"] {
+  background: linear-gradient(135deg, #0d2137 0%, #102a4a 30%, #141e30 70%, #1a1a2e 100%);
+  background-attachment: fixed;
+}
+
+[data-theme="dark"] .toolbar {
+  background: rgba(30,41,59,0.85);
+  border-color: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .canvas-container {
+  background: rgba(30,41,59,0.6);
+  border-color: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .sidebar {
+  background: rgba(30,41,59,0.85);
+  border-color: rgba(255,255,255,0.08);
+}
+
+[data-theme="dark"] .statusbar {
+  background: rgba(30,41,59,0.7);
+  border-color: rgba(255,255,255,0.06);
+}
+
+[data-theme="dark"] .mode-toggle {
+  background: rgba(255,255,255,0.06);
+}
+
+[data-theme="dark"] .mode-toggle__btn--active {
+  background: rgba(255,255,255,0.12);
+  color: #90caf9;
+}
+
+[data-theme="dark"] .toolbar__btn {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+  color: var(--gray-400);
+}
+
+[data-theme="dark"] .toolbar__btn:hover {
+  background: rgba(66,165,245,0.15);
+  border-color: var(--sky-primary);
+  color: #fff;
+}
+
+[data-theme="dark"] .sidebar__input {
+  background: rgba(0,0,0,0.3);
+  border-color: rgba(255,255,255,0.1);
+  color: var(--gray-200);
+}
+
+[data-theme="dark"] .sidebar__preset {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+  color: var(--gray-400);
+}
+
+[data-theme="dark"] .sidebar__preset:hover {
+  background: rgba(66,165,245,0.15);
+  border-color: var(--sky-primary);
+  color: #fff;
+}
+
 html, body {
   height: 100%;
   font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC",
@@ -395,6 +480,12 @@ html, body {
     <button class="toolbar__btn" id="btnReset" title="重置" disabled>
       重置
     </button>
+
+    <span style="flex:1;"></span>
+
+    <button class="toolbar__btn" id="btnTheme" title="切换深色/浅色主题">
+      主题
+    </button>
   </header>
 
   <!-- 主体区域 -->
@@ -566,6 +657,9 @@ const dom = {
 
   // 隐藏的 file input
   fileInput: $('#fileInput'),
+
+  // 主题
+  btnTheme: $('#btnTheme'),
 };
 
 // ===== 模式切换 =====
@@ -956,6 +1050,9 @@ dom.btnRedo.addEventListener('click', redo);
 
 // 键盘快捷键
 document.addEventListener('keydown', (e) => {
+  // 仅当图片已加载且不在输入框中时响应快捷键
+  if (!state.sourceImage || e.target.closest('input, select, textarea')) return;
+
   // Ctrl+Z 撤销
   if (e.ctrlKey && !e.shiftKey && e.key === 'z') {
     e.preventDefault();
@@ -965,6 +1062,36 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
     e.preventDefault();
     redo();
+  }
+  // Enter = 保存
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveResult();
+  }
+  // Esc = 重置裁剪 / 重置缩放
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (state.mode === 'crop') {
+      if (state.crop.active) pushHistory();
+      resetCrop();
+      state.imageDisplay.zoom = 1;
+      state.imageDisplay.panX = 0;
+      state.imageDisplay.panY = 0;
+      applyZoomPan();
+      updateCropInfo();
+    } else {
+      dom.resizeWidth.value = state.sourceImage.naturalWidth;
+      dom.resizeHeight.value = state.sourceImage.naturalHeight;
+    }
+    drawPreview();
+  }
+  // Delete = 重置裁剪框
+  if (e.key === 'Delete' && state.mode === 'crop') {
+    e.preventDefault();
+    if (state.crop.active) pushHistory();
+    resetCrop();
+    updateCropInfo();
+    drawPreview();
   }
 });
 
@@ -1577,9 +1704,29 @@ function updateCropInfo() {
   }
 }
 
+// ===== 主题切换 =====
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  dom.btnTheme.textContent = theme === 'dark' ? '浅色' : '深色';
+  localStorage.setItem('photo-editor-theme', theme);
+}
+
+dom.btnTheme.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') || 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+});
+
+// 初始化主题（优先读取保存的偏好，否则跟随系统）
+const savedTheme = localStorage.getItem('photo-editor-theme');
+if (savedTheme) {
+  applyTheme(savedTheme);
+} else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  applyTheme('dark');
+}
+
 // ===== 初始化 =====
 setMode('crop');
-console.log('图片剪裁器 v0.1 — 双模式就绪，图片加载就绪');
+console.log('图片剪裁器 v0.2 — 快捷键+主题就绪');
 </script>
 
 </body>
