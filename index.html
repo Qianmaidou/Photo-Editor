@@ -54,16 +54,49 @@
   --blue-deep:   #90caf9;
   --blue-dark:   #0d2137;
 
-  --gray-50:  #1e293b;
+  --gray-50:  #0f172a;
   --gray-100: #1e293b;
   --gray-200: #334155;
   --gray-300: #475569;
-  --gray-400: #64748b;
-  --gray-500: #94a3b8;
-  --gray-600: #cbd5e1;
-  --gray-700: #e2e8f0;
-  --gray-800: #f1f5f9;
-  --gray-900: #f8fafc;
+  --gray-400: #94a3b8;
+  --gray-500: #cbd5e1;
+  --gray-600: #e2e8f0;
+  --gray-700: #f1f5f9;
+  --gray-800: #f8fafc;
+  --gray-900: #ffffff;
+
+  color-scheme: dark;
+}
+
+[data-theme="dark"] .toolbar__brand,
+[data-theme="dark"] .sidebar__title,
+[data-theme="dark"] .sidebar__label,
+[data-theme="dark"] .canvas-container__empty p,
+[data-theme="dark"] .canvas-container__empty span,
+[data-theme="dark"] .statusbar,
+[data-theme="dark"] #cropInfo,
+[data-theme="dark"] #sidebarEmpty {
+  color: var(--gray-300);
+}
+
+[data-theme="dark"] .sidebar__checkbox {
+  color: var(--gray-300);
+}
+
+[data-theme="dark"] .toolbar__brand {
+  color: #90caf9;
+}
+
+[data-theme="dark"] .sidebar__title {
+  color: var(--gray-400);
+}
+
+[data-theme="dark"] .canvas-container__empty p {
+  color: var(--gray-400);
+}
+
+[data-theme="dark"] .canvas-container__empty span {
+  color: var(--gray-500);
 }
 
 [data-theme="dark"] {
