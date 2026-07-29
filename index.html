@@ -1209,6 +1209,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!state.sourceImage || state.mode !== 'crop') return;
 
   // Space + 拖拽 = 平移图片
+  // Space + 拖拽 = 总是平移
   if (state.spaceHeld) {
     state.panning = true;
     state.panStart = { x: e.clientX, y: e.clientY };
@@ -1232,7 +1233,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (hit && hit !== 'move') {
     // 拖拽手柄：缩放裁剪框
     state.dragging = true;
-    state.dragTarget = hit; // 'nw', 'n', 'ne', etc.
+    state.dragTarget = hit;
     state.dragStart = imgPt;
     state.cropBeforeDrag = { ...state.crop };
   } else if (hit === 'move') {
@@ -1241,8 +1242,16 @@ canvas.addEventListener('pointerdown', (e) => {
     state.dragTarget = 'move';
     state.dragStart = imgPt;
     state.cropBeforeDrag = { ...state.crop };
+  } else if (state.imageDisplay.zoom > 1) {
+    // 放大状态下，点击空白处 = 平移图片（不创建新裁剪框）
+    state.panning = true;
+    state.panStart = { x: e.clientX, y: e.clientY };
+    state.panBefore = { panX: state.imageDisplay.panX, panY: state.imageDisplay.panY };
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+    return;
   } else {
-    // 新建裁剪框
+    // 1× 状态下，点击空白处 = 新建裁剪框
     state.dragging = true;
     state.dragTarget = 'new';
     state.dragStart = imgPt;
@@ -1430,6 +1439,8 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.style.cursor = HANDLE_DEFS[hit].cursor;
   } else if (hit === 'move') {
     canvas.style.cursor = 'move';
+  } else if (state.imageDisplay.zoom > 1) {
+    canvas.style.cursor = 'grab';
   } else {
     canvas.style.cursor = 'crosshair';
   }
