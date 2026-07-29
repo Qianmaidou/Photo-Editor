@@ -1209,7 +1209,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!state.sourceImage || state.mode !== 'crop') return;
 
   // Space + 拖拽 = 平移图片
-  // Space + 拖拽 = 总是平移
+  // Space + 拖拽 = 总是平移（保留快捷键）
   if (state.spaceHeld) {
     state.panning = true;
     state.panStart = { x: e.clientX, y: e.clientY };
@@ -1226,7 +1226,16 @@ canvas.addEventListener('pointerdown', (e) => {
   // 检查是否在图片范围内
   const inImage = pt.x >= state.imageDisplay.x && pt.x <= state.imageDisplay.x + state.imageDisplay.width &&
                   pt.y >= state.imageDisplay.y && pt.y <= state.imageDisplay.y + state.imageDisplay.height;
-  if (!inImage) return;
+
+  if (!inImage) {
+    // 图片外拖拽 = 平移视角
+    state.panning = true;
+    state.panStart = { x: e.clientX, y: e.clientY };
+    state.panBefore = { panX: state.imageDisplay.panX, panY: state.imageDisplay.panY };
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
 
   const hit = hitCropHandle(pt.x, pt.y);
 
@@ -1242,16 +1251,8 @@ canvas.addEventListener('pointerdown', (e) => {
     state.dragTarget = 'move';
     state.dragStart = imgPt;
     state.cropBeforeDrag = { ...state.crop };
-  } else if (state.imageDisplay.zoom > 1) {
-    // 放大状态下，点击空白处 = 平移图片（不创建新裁剪框）
-    state.panning = true;
-    state.panStart = { x: e.clientX, y: e.clientY };
-    state.panBefore = { panX: state.imageDisplay.panX, panY: state.imageDisplay.panY };
-    canvas.setPointerCapture(e.pointerId);
-    canvas.style.cursor = 'grabbing';
-    return;
   } else {
-    // 1× 状态下，点击空白处 = 新建裁剪框
+    // 图片内空白处 = 新建裁剪框
     state.dragging = true;
     state.dragTarget = 'new';
     state.dragStart = imgPt;
@@ -1434,13 +1435,17 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   const pt = canvasCoords(e);
+  const inImage = pt.x >= state.imageDisplay.x && pt.x <= state.imageDisplay.x + state.imageDisplay.width &&
+                  pt.y >= state.imageDisplay.y && pt.y <= state.imageDisplay.y + state.imageDisplay.height;
+  if (!inImage) {
+    canvas.style.cursor = 'grab';
+    return;
+  }
   const hit = hitCropHandle(pt.x, pt.y);
   if (hit && hit !== 'move') {
     canvas.style.cursor = HANDLE_DEFS[hit].cursor;
   } else if (hit === 'move') {
     canvas.style.cursor = 'move';
-  } else if (state.imageDisplay.zoom > 1) {
-    canvas.style.cursor = 'grab';
   } else {
     canvas.style.cursor = 'crosshair';
   }
